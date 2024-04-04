@@ -35,7 +35,7 @@ namespace OCIRegistry.Controllers
             var blob = await _db.Blobs.Where(x => x.Id == reference).Where(x => x.Manifests.Any(c => c.Repository.Name == repo)).FirstOrDefaultAsync();
             if (blob is null) return NotFound();
 
-            using var file = await _store.GetAsync(blob.Id);
+            var file = await _store.GetAsync(blob.Id);
             return File(file, MediaType.Layer);
         }
 
@@ -61,7 +61,42 @@ namespace OCIRegistry.Controllers
             var repo = RepoHelper.RepoName(prefix, name);
             var uuid = _uploader.StartUpload(repo);
 
-            Response.Headers.Location = $"../upload/{uuid}";
+            // check content type for monolithic upload
+            if (Request.Headers.TryGetValue("Content-Type", out var values))
+            {
+                if (values.Contains("application/octet-stream"))
+                {
+                    var size = await _uploader.UploadChunk(repo, uuid, Request.Body);
+
+                    string uploadDigest;
+
+                    using (var upload = _uploader.FinishUpload(repo, uuid))
+                    {
+                        uploadDigest = _digest.CreateDigest(upload);
+                        upload.Position = 0;
+
+                        await _store.PutAsync(uploadDigest, upload);
+                    }
+                    _uploader.CleanupUpload(repo, uuid);
+
+                    var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
+                    if (blob is null)
+                    {
+                        blob = new Blob { Id = uploadDigest, Size = size };
+                        _db.Blobs.Add(blob);
+                    }
+
+                    await _db.SaveChangesAsync();
+
+                    Response.Headers.Location = $"/v2/{repo}/blobs/{uploadDigest}";
+                    Response.Headers.Append("Range", $"0-{size}");
+                    return StatusCode(StatusCodes.Status201Created);
+                }
+            }   
+
+            Response.Headers.Location = $"/v2/{repo}/blobs/upload/{uuid}";
+
+            // Response.Headers.Location = $"../upload/{uuid}";
             return Accepted();
         }
 
@@ -119,7 +154,7 @@ namespace OCIRegistry.Controllers
 
             Response.Headers.Location = $"/v2/{repo}/blobs/{uploadDigest}";
             Response.Headers.Append("Range", $"0-{size}");
-            return Created();
+            return StatusCode(StatusCodes.Status201Created);
         }
     }
 }

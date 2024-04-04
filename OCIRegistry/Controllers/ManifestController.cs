@@ -125,7 +125,7 @@ namespace OCIRegistry.Controllers
 
                 manifest = new Manifest { Digest = digest, RepositoryId = repository.Id, Repository = repository, Content = content };
 
-                if (reference != manifest.Digest)
+                if (!DigestHelper.IsDigest(reference))
                 {
                     var tag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
                     _db.Tags.Add(tag);
@@ -139,16 +139,19 @@ namespace OCIRegistry.Controllers
                 if (manifest == null)
                 {
                     manifest = new Manifest { Digest = digest, RepositoryId = repository.Id, Repository = repository, Content = content };
-                    var tag = await _db.Tags.Where(t => t.Manifest.RepositoryId == repository.Id || t.Name == reference).FirstOrDefaultAsync();
-                    if (tag == null)
+                    if (!DigestHelper.IsDigest(reference))
                     {
-                        var newTag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
-                        _db.Tags.Add(newTag);
-                    }
-                    else
-                    {
-                        tag.Manifest = manifest;
-                        //_db.Tags.Update(tag);
+                        var tag = await _db.Tags.Where(t => t.Manifest.RepositoryId == repository.Id && t.Name == reference).FirstOrDefaultAsync();
+                        if (tag == null)
+                        {
+                            var newTag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
+                            _db.Tags.Add(newTag);
+                        }
+                        else
+                        {
+                            tag.Manifest = manifest;
+                            //_db.Tags.Update(tag);
+                        }
                     }
                     _db.Manifests.Add(manifest);
                 }
@@ -177,9 +180,9 @@ namespace OCIRegistry.Controllers
 
             await _db.SaveChangesAsync();
 
-            Response.Headers.Location = $"../{reference}";
+            Response.Headers.Location = $"/v2/{repo}/manifests/{reference}";
             Response.Headers.Append("Docker-Content-Digest", digest);
-            return Created();
+            return StatusCode(StatusCodes.Status201Created);
         }
     }
 }
