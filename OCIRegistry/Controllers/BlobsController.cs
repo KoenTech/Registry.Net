@@ -17,14 +17,16 @@ namespace OCIRegistry.Controllers
         private readonly DigestService _digest;
         private readonly AppDbContext _db;
         private readonly IBlobStore _store;
-        private readonly BlobUploader _uploader;
+        private readonly BlobUploadService _uploadService;
+        private readonly ILogger<BlobsController> _logger;
 
-        public BlobsController(DigestService digest, AppDbContext db, IBlobStore store, BlobUploader uploader)
+        public BlobsController(DigestService digest, AppDbContext db, IBlobStore store, BlobUploadService uploadService, ILogger<BlobsController> logger)
         {
             _digest = digest;
             _db = db;
             _store=store;
-            _uploader=uploader;
+            _uploadService = uploadService;
+            _logger=logger;
         }
 
         [HttpGet("{reference}")]
@@ -56,105 +58,168 @@ namespace OCIRegistry.Controllers
         [DockerAuthorize(RepoScope.Push)]
         public async Task<IActionResult> Upload([FromRoute] string name, [FromRoute] string? prefix)
         {
-            if (Request.Headers.ContentLength == 0) Response.Headers.Append("OCI-Chunk-Min-Length", "1024");
+            if (Request.Headers.ContentLength == 0) Response.Headers.Append("OCI-Chunk-Min-Length", "1024"); // TODO: Configurable chunk size
 
             var repo = RepoHelper.RepoName(prefix, name);
-            var uuid = _uploader.StartUpload(repo);
+            var uuid = _uploadService.StartUpload(repo);
 
             // check content type for monolithic upload
             if (Request.Headers.TryGetValue("Content-Type", out var values))
             {
                 if (values.Contains("application/octet-stream"))
                 {
-                    var size = await _uploader.UploadChunk(repo, uuid, Request.Body);
+                    var session = _uploadService.GetUpload(uuid, repo);
+                    long lastIndex = await session.AppendChunk(Request.Body);
 
                     string uploadDigest;
 
-                    using (var upload = _uploader.FinishUpload(repo, uuid))
+                    using (var upload = session.OpenContent())
                     {
                         uploadDigest = _digest.CreateDigest(upload);
                         upload.Position = 0;
 
                         await _store.PutAsync(uploadDigest, upload);
                     }
-                    _uploader.CleanupUpload(repo, uuid);
+                    _uploadService.CleanupUpload(uuid);
 
                     var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
                     if (blob is null)
                     {
-                        blob = new Blob { Id = uploadDigest, Size = size };
+                        blob = new Blob { Id = uploadDigest, Size = (ulong)lastIndex+1 };
                         _db.Blobs.Add(blob);
                     }
 
                     await _db.SaveChangesAsync();
 
                     Response.Headers.Location = $"/v2/{repo}/blobs/{uploadDigest}";
-                    Response.Headers.Append("Range", $"0-{size}");
+                    Response.Headers.Append("Range", $"0-{lastIndex}");
                     return StatusCode(StatusCodes.Status201Created);
                 }
             }   
 
-            Response.Headers.Location = $"/v2/{repo}/blobs/upload/{uuid}";
+            Response.Headers.Location = $"/v2/{repo}/blobs/uploads/{uuid}";
 
-            // Response.Headers.Location = $"../upload/{uuid}";
             return Accepted();
         }
 
-        [HttpPatch("upload/{uuid:guid}")]
+        [HttpPatch("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
         public async Task<IActionResult> PatchBlob([FromRoute] Guid uuid, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
-            if (!_uploader.UploadAllowed(repo, uuid)) return Forbid();
 
-            var size = await _uploader.UploadChunk(repo, uuid, Request.Body);
+            try
+            {
+                var session = _uploadService.GetUpload(uuid, repo);
+                var range = ParseRangeHeader(Request);
 
-            Response.Headers.Location = Request.Path.ToString();
-            Response.Headers.Append("Range", $"0-{size}");
+                if (!session.ValidateRange(range))
+                {
+                    _logger.LogWarning("Range not satisfiable for upload {uuid}", uuid);
+                    return StatusCode(StatusCodes.Status416RangeNotSatisfiable);
+                }
+
+                var lastIndex = await session.AppendChunk(Request.Body);
+
+                Response.Headers.Location = Request.Path.ToString();
+                Response.Headers.Append("Range", $"0-{lastIndex}");
+            }
+            catch (InvalidOperationException)
+            {
+                return Forbid();
+            }
 
             return Accepted();
         }
 
-        [HttpPut("upload/{uuid:guid}")]
+        [HttpPut("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
         public async Task<IActionResult> PutBlob([FromRoute] Guid uuid,[FromQuery] string digest, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
-            if (!_uploader.UploadAllowed(repo, uuid)) return Forbid();
 
-            var size = await _uploader.UploadChunk(repo, uuid, Request.Body);
-
-            string uploadDigest;
-
-            using (var upload = _uploader.FinishUpload(repo, uuid))
+            try
             {
-                uploadDigest = _digest.CreateDigest(upload);
-                upload.Position = 0;
+                var session = _uploadService.GetUpload(uuid, repo);
+                var range = ParseRangeHeader(Request);
 
-                if (uploadDigest != digest)
+                if (!session.ValidateRange(range) && Request.ContentLength != 0)
                 {
-                    await upload.DisposeAsync();
-                    _uploader.CleanupUpload(repo, uuid);
-                    return BadRequest();
+                    _logger.LogWarning("Range not satisfiable for upload {uuid}", uuid);
+                    return StatusCode(StatusCodes.Status416RangeNotSatisfiable);
                 }
 
-                await _store.PutAsync(uploadDigest, upload);
-            }
-            _uploader.CleanupUpload(repo, uuid);
+                long lastIndex = session.Position;
+                if (Request.ContentLength > 0) lastIndex = await session.AppendChunk(Request.Body);
 
-            var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
-            if (blob is null)
+                string uploadDigest;
+
+                using (var upload = session.OpenContent())
+                {
+                    uploadDigest = _digest.CreateDigest(upload);
+                    upload.Position = 0;
+
+                    if (uploadDigest != digest)
+                    {
+                        await upload.DisposeAsync();
+                        _uploadService.CleanupUpload(uuid);
+                        return BadRequest();
+                    }
+
+                    await _store.PutAsync(uploadDigest, upload);
+                }
+
+                _uploadService.CleanupUpload(uuid);
+
+                var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
+                if (blob is null)
+                {
+                    blob = new Blob { Id = uploadDigest, Size = (ulong)(lastIndex+1) };
+                    _db.Blobs.Add(blob);
+                }
+
+                await _db.SaveChangesAsync();
+
+
+                Response.Headers.Location = $"/v2/{repo}/blobs/{uploadDigest}";
+                Response.Headers.Append("Range", $"0-{lastIndex}");
+                return StatusCode(StatusCodes.Status201Created);
+            }
+            catch (InvalidOperationException)
             {
-                blob = new Blob { Id = uploadDigest, Size = size };
-                _db.Blobs.Add(blob);
+                return Forbid();
             }
+        }
 
-            await _db.SaveChangesAsync();
+        [HttpGet("uploads/{uuid:guid}")]
+        [DockerAuthorize(RepoScope.Push)]
+        public async Task<IActionResult> GetBlobUpload([FromRoute] Guid uuid, [FromRoute] string name, [FromRoute] string? prefix)
+        {
+            var repo = RepoHelper.RepoName(prefix, name);
 
+            try
+            {
+                var session = _uploadService.GetUpload(uuid, repo);
+                Response.Headers.Location = $"/v2/{repo}/blobs/uploads/{uuid}";
+                Response.Headers.Append("Range", $"{0}-{session.Position}");
+                return NoContent();
+            }
+            catch (InvalidUploadException)
+            {
+                return Forbid();
+            }
+        }
 
-            Response.Headers.Location = $"/v2/{repo}/blobs/{uploadDigest}";
-            Response.Headers.Append("Range", $"0-{size}");
-            return StatusCode(StatusCodes.Status201Created);
+        static private long ParseRangeHeader(HttpRequest request)
+        {
+            var hasRange = request.Headers.TryGetValue("Content-Range", out var rangeHeader);
+            if (!hasRange) return 0;
+            var rangeValue = rangeHeader.FirstOrDefault();
+            if (rangeValue is null) return 0;
+            var split = rangeValue.Split('-');
+            if (split.Length != 2) return 0;
+            if (!long.TryParse(split[0], out var from) || !long.TryParse(split[1], out var to)) return 0;
+            return from;
         }
     }
 }

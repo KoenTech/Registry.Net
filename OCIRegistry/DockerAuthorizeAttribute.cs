@@ -66,9 +66,9 @@ namespace OCIRegistry
     [Flags]
     public enum RepoScope
     {
-        None = 0,
-        Pull = 0b00000001,
-        Push = 0b00000010,
-        Delete = 0b00000100,
+        None =      0,
+        Pull =      0b00000001,
+        Push =      0b00000010,
+        Delete =    0b00000100,
     } // TODO: Add the proper scopes
 }

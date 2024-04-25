@@ -3,14 +3,32 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.JsonWebTokens;
 using OCIRegistry.Data;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
+
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateLogger();
+
+Log.Logger.Information(@"
+  _____            _     _                _   _ ______ _______ 
+ |  __ \          (_)   | |              | \ | |  ____|__   __|
+ | |__) |___  __ _ _ ___| |_ _ __ _   _  |  \| | |__     | |   
+ |  _  // _ \/ _` | / __| __| '__| | | | | . ` |  __|    | |   
+ | | \ \  __/ (_| | \__ \ |_| |  | |_| |_| |\  | |____   | |   
+ |_|  \_\___|\__, |_|___/\__|_|   \__, (_)_| \_|______|  |_|   
+              __/ |                __/ |                       
+             |___/                |___/                        
+");
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSerilog(lc => lc.ReadFrom.Configuration(builder.Configuration).WriteTo.Console());
+//builder.Services.AddSerilog();
 builder.Services.AddSingleton<DigestService>();
-builder.Services.AddSingleton<BlobUploader>();
+builder.Services.AddSingleton<BlobUploadService>();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<IBlobStore, FileSystemBlobStore>();
 

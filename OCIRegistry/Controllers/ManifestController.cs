@@ -20,11 +20,13 @@ namespace OCIRegistry.Controllers
     {
         private readonly DigestService _digest;
         private readonly AppDbContext _db;
+        private readonly ILogger<ManifestController> _logger;
 
-        public ManifestController(DigestService digest, AppDbContext db)
+        public ManifestController(DigestService digest, AppDbContext db, ILogger<ManifestController> logger)
         {
             _digest = digest;
             _db = db;
+            _logger=logger;
         }
 
         [HttpGet("{reference}")]
@@ -113,15 +115,17 @@ namespace OCIRegistry.Controllers
                 content = buffer.ToArray();
             }
 
-            Console.WriteLine($"Received manifest: {digest}");
+            //Console.WriteLine($"Received manifest: {digest}");
             System.Security.Cryptography.SHA256 sha256 = System.Security.Cryptography.SHA256.Create();
             var hash = sha256.ComputeHash(content);
-            Console.WriteLine($"Calculated digest: sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}");
+            //Console.WriteLine($"Calculated digest: sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}");
 
             if (repository == null)
             {
                 repository = new Repository { Name = repo };
                 _db.Repositories.Add(repository);
+
+                _logger.LogDebug("Created new repository {repo}", repository.Name);
 
                 manifest = new Manifest { Digest = digest, RepositoryId = repository.Id, Repository = repository, Content = content };
 
@@ -129,6 +133,7 @@ namespace OCIRegistry.Controllers
                 {
                     var tag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
                     _db.Tags.Add(tag);
+                    _logger.LogDebug("Created new tag {tag} for repository {repo}", tag.Name, repository.Name);
                 }
 
                 _db.Manifests.Add(manifest);
@@ -139,21 +144,24 @@ namespace OCIRegistry.Controllers
                 if (manifest == null)
                 {
                     manifest = new Manifest { Digest = digest, RepositoryId = repository.Id, Repository = repository, Content = content };
-                    if (!DigestHelper.IsDigest(reference))
-                    {
-                        var tag = await _db.Tags.Where(t => t.Manifest.RepositoryId == repository.Id && t.Name == reference).FirstOrDefaultAsync();
-                        if (tag == null)
-                        {
-                            var newTag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
-                            _db.Tags.Add(newTag);
-                        }
-                        else
-                        {
-                            tag.Manifest = manifest;
-                            //_db.Tags.Update(tag);
-                        }
-                    }
+
                     _db.Manifests.Add(manifest);
+                    _logger.LogDebug("Created new manifest {digest} for repository {repo}", manifest.Digest, repository.Name);
+                }
+                if (!DigestHelper.IsDigest(reference))
+                {
+                    var tag = await _db.Tags.Where(t => t.Manifest.RepositoryId == repository.Id && t.Name == reference).FirstOrDefaultAsync();
+                    if (tag == null)
+                    {
+                        var newTag = new Tag { Name = reference, ManifestId = manifest.Id, Manifest = manifest };
+                        _db.Tags.Add(newTag);
+                        _logger.LogDebug("Created new tag {tag} for repository {repo}", newTag.Name, repository.Name);
+                    }
+                    else
+                    {
+                        tag.Manifest = manifest;
+                        _logger.LogDebug("Updated tag {tag} for repository {repo}", tag.Name, repository.Name);
+                    }
                 }
             }
 
@@ -175,6 +183,7 @@ namespace OCIRegistry.Controllers
             }
             catch (JsonException)
             {
+                _logger.LogWarning("Failed to parse manifest as ImageManifest");
                 return BadRequest();
             }
 

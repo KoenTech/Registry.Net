@@ -22,10 +22,15 @@ namespace OCIRegistry.Controllers
     [ApiController]
     public class AuthController : ControllerBase
     {
+        private readonly ILogger<AuthController> _logger;
+        public AuthController(ILogger<AuthController> logger)
+        {
+            _logger=logger;
+        }
+
         [HttpGet]
         public async Task<IActionResult> Login([FromHeader(Name = "Authorization")] string? authHeader, [FromQuery] string? scope)
         {
-            Console.WriteLine($"Requested new auth token | scope = {scope}");
             if (authHeader is null)
             {
                 var identity = new ClaimsIdentity();
@@ -41,6 +46,7 @@ namespace OCIRegistry.Controllers
                 identity.AddClaim(new Claim(JwtRegisteredClaimNames.Sub, "user"));
 
                 var response = new AuthResponse { Token = GenerateToken(identity), ExpiresIn = 7200, IssuedAt = DateTime.UtcNow };
+                _logger.LogDebug("User {user} authenticated with scope {scope}", "user", scope);
                 return Ok(response);
             }
             return Unauthorized();
