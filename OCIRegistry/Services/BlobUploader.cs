@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
 using OCIRegistry.Models.Database;
 using Serilog;
+using System.Collections.Concurrent;
 
 namespace OCIRegistry.Services
 {
@@ -53,7 +54,7 @@ namespace OCIRegistry.Services
     public class BlobUploadService : BackgroundService
     {
         private readonly ILogger<BlobUploadService> _logger;
-        private Dictionary<Guid, BlobUpload> _uploads = new();
+        private ConcurrentDictionary<Guid, BlobUpload> _uploads = new();
 
         public BlobUploadService(ILogger<BlobUploadService> logger)
         {
@@ -68,7 +69,7 @@ namespace OCIRegistry.Services
         public Guid StartUpload(string repo)
         {
             var upload = new BlobUpload(repo);
-            _uploads.Add(upload.UUID, upload);
+            if (!_uploads.TryAdd(upload.UUID, upload)) throw new InvalidUploadException("An upload with this UUID already exists");
             _logger.LogDebug("Created new upload session for {repo} with UUID {uuid}", repo, upload.UUID);
             return upload.UUID;
         }
@@ -96,8 +97,10 @@ namespace OCIRegistry.Services
         /// <param name="uuid"></param>
         public void CleanupUpload(Guid uuid)
         {
-            _uploads[uuid].Cleanup();
-            _uploads.Remove(uuid);
+            if (_uploads.TryRemove(uuid, out var upload))
+            {
+                upload.Cleanup();
+            }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -114,7 +117,7 @@ namespace OCIRegistry.Services
                         try
                         {
                             upload.Cleanup();
-                            _uploads.Remove(upload.UUID);
+                            _uploads.TryRemove(upload.UUID, out _);
                         }
                         catch (IOException e)
                         {

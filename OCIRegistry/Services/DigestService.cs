@@ -13,11 +13,14 @@ namespace OCIRegistry.Services
 
         public string CreateDigest(Stream stream)
         {
-            var hash = _sha256.ComputeHash(stream);
-            return $"sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}";
+            lock (_sha256) // TODO: Have each upload session use its own instance of SHA256
+            {
+                var hash = _sha256.ComputeHash(stream);
+                return $"sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}";
+            }
         }
 
-        public bool ChechDigest(Stream stream, string digest)
+        public bool CheckDigest(Stream stream, string digest)
         {
             var hash = _sha256.ComputeHash(stream);
             return $"sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}" == digest.ToLowerInvariant();

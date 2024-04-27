@@ -56,6 +56,7 @@ namespace OCIRegistry.Controllers
 
         [HttpPost("uploads")]
         [DockerAuthorize(RepoScope.Push)]
+        [DisableRequestSizeLimit]
         public async Task<IActionResult> Upload([FromRoute] string name, [FromRoute] string? prefix)
         {
             if (Request.Headers.ContentLength == 0) Response.Headers.Append("OCI-Chunk-Min-Length", "1024"); // TODO: Configurable chunk size
@@ -104,6 +105,7 @@ namespace OCIRegistry.Controllers
 
         [HttpPatch("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
+        [DisableRequestSizeLimit]
         public async Task<IActionResult> PatchBlob([FromRoute] Guid uuid, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
@@ -134,6 +136,7 @@ namespace OCIRegistry.Controllers
 
         [HttpPut("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
+        [DisableRequestSizeLimit]
         public async Task<IActionResult> PutBlob([FromRoute] Guid uuid,[FromQuery] string digest, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
