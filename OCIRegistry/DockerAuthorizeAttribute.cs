@@ -36,16 +36,17 @@ namespace OCIRegistry
                 {
                     try
                     {
-                        var access = JsonSerializer.Deserialize<AccessClaim>(accessClaim);
-                        if (access?.Name == repo && repo is not null)
+                        var access = JsonSerializer.Deserialize<List<AccessClaim>>(accessClaim);
+                        var currentAccess = access?.FirstOrDefault(x => x.Type == "repository" && x.Name == repo);
+                        if (currentAccess?.Name == repo && repo is not null)
                         {
-                            var jwtAccess = access?.Actions.Select(x => Enum.Parse<RepoScope>(x, true)).Aggregate((a, b) => a | b) ?? RepoScope.None;
+                            var jwtAccess = currentAccess?.Actions.Select(x => Enum.Parse<RepoScope>(x, true)).Aggregate((a, b) => a | b) ?? RepoScope.None;
                             if (jwtAccess.HasFlag(_scope)) return;
                         }
                     }
                     catch (JsonException)
                     {
-                        context.Result = new BadRequestResult();
+                        context.Result = new UnauthorizedResult();
                         return;
                     }
                 }

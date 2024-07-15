@@ -16,7 +16,8 @@ namespace OCIRegistry.Data
 
         public async Task<Stream> GetAsync(string digest)
         {
-            var path = Path.Combine(_path, DigestHelper.ToHash(digest));
+            var hash = DigestHelper.ToHash(digest);
+            var path = Path.Combine(_path, hash.Substring(0, 2), hash);
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException();
@@ -27,7 +28,11 @@ namespace OCIRegistry.Data
 
         public async Task PutAsync(string digest, Stream stream)
         {
-            var path = Path.Combine(_path, DigestHelper.ToHash(digest));
+            var hash = DigestHelper.ToHash(digest);
+            var dir = Path.Combine(_path, hash.Substring(0, 2));
+            Directory.CreateDirectory(dir);
+
+            var path = Path.Combine(dir, hash);
             if (File.Exists(path))
             {
                 return;
@@ -42,7 +47,8 @@ namespace OCIRegistry.Data
 
         public Task DeleteAsync(string digest)
         {
-            var path = Path.Combine(_path, DigestHelper.ToHash(digest));
+            var hash = DigestHelper.ToHash(digest);
+            var path = Path.Combine(_path, hash.Substring(0, 2), hash);
             if (!File.Exists(path))
             {
                 return Task.CompletedTask;
@@ -54,7 +60,8 @@ namespace OCIRegistry.Data
 
         public Task<bool> ExistsAsync(string digest)
         {
-            var path = Path.Combine(_path, DigestHelper.ToHash(digest));
+            var hash = DigestHelper.ToHash(digest);
+            var path = Path.Combine(_path, hash.Substring(0, 2), hash);
             return Task.FromResult(File.Exists(path));
         }
     }

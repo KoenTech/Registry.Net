@@ -9,6 +9,7 @@ namespace OCIRegistry.Models.Database
         public required string Id { get; set; }
         public required ulong Size { get; set; }
         public List<Manifest> Manifests { get; set; } = new();
+        //public string? MediaType { get; set; }
     }
 
     public class Manifest

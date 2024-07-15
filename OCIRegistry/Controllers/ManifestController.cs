@@ -58,7 +58,7 @@ namespace OCIRegistry.Controllers
             if (manifest == null) return NotFound();
 
             Response.Headers.Append("Docker-Content-Digest", manifest.Digest);
-            return File(manifest.Content, MediaType.Manifest);
+            return File(manifest.Content, MediaType.ImageManifest);
         }
 
         [HttpHead("{reference}")]
@@ -91,7 +91,7 @@ namespace OCIRegistry.Controllers
 
             Response.Headers.Append("Docker-Content-Digest", manifest.Digest);
             Response.Headers.ContentLength = manifest.Content.Length;
-            Response.Headers.ContentType = MediaType.Manifest;
+            Response.Headers.ContentType = MediaType.ImageManifest;
             return Ok();
         }
 

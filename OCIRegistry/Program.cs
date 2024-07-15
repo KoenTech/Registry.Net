@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using OCIRegistry.Data;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using OCIRegistry.Configuration;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -26,19 +27,17 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSerilog(lc => lc.ReadFrom.Configuration(builder.Configuration).WriteTo.Console());
-//builder.Services.AddSerilog();
 builder.Services.AddSingleton<DigestService>();
 builder.Services.AddSingleton<BlobUploadService>();
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<IBlobStore, FileSystemBlobStore>();
 
-//builder.Services.AddHttpLogging(o => { });
+builder.Services.Configure<TokenOptions>(builder.Configuration.GetSection(TokenOptions.SectionName));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
         o.Audience = "registry";
-        //o.Authority = "registry-auth";
         o.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
         {
             ValidateIssuer = false,
@@ -57,7 +56,6 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    //app.UseHttpLogging();
 }
 
 //app.UseHttpsRedirection();

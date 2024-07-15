@@ -33,12 +33,13 @@ namespace OCIRegistry.Controllers
         [DockerAuthorize(RepoScope.Pull)]
         public async Task<IActionResult> GetBlob([FromRoute] string reference, [FromRoute] string name, [FromRoute] string? prefix)
         {
+            string mediaType = Request.Headers.Accept.FirstOrDefault() ?? MediaType.LayerTarGzip; 
             string repo = RepoHelper.RepoName(prefix, name);
             var blob = await _db.Blobs.Where(x => x.Id == reference).Where(x => x.Manifests.Any(c => c.Repository.Name == repo)).FirstOrDefaultAsync();
             if (blob is null) return NotFound();
 
             var file = await _store.GetAsync(blob.Id);
-            return File(file, MediaType.Layer);
+            return File(file, mediaType);
         }
 
         [HttpHead("{reference}")]
@@ -128,7 +129,7 @@ namespace OCIRegistry.Controllers
             }
             catch (InvalidOperationException)
             {
-                return Forbid();
+                return DockerErrorResponse.BlobUploadInvalid;
             }
 
             return Accepted();
@@ -166,7 +167,7 @@ namespace OCIRegistry.Controllers
                     {
                         await upload.DisposeAsync();
                         _uploadService.CleanupUpload(uuid);
-                        return BadRequest();
+                        return DockerErrorResponse.DigestInvalid;
                     }
 
                     await _store.PutAsync(uploadDigest, upload);
@@ -190,7 +191,7 @@ namespace OCIRegistry.Controllers
             }
             catch (InvalidOperationException)
             {
-                return Forbid();
+                return DockerErrorResponse.Denied;
             }
         }
 
@@ -209,7 +210,7 @@ namespace OCIRegistry.Controllers
             }
             catch (InvalidUploadException)
             {
-                return Forbid();
+                return DockerErrorResponse.BlobUploadUnknown;
             }
         }
 
