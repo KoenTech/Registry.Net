@@ -71,7 +71,7 @@ namespace OCIRegistry.Controllers
             if (user is null) return NotFound();
 
             var permissions = await _db.Permissions.Where(x => x.UserId == id || x.UserId == null).ToListAsync();
-            return Ok(permissions);
+            return Ok(permissions.Select(x => PermissionDto.FromDatabaseModel(x)));
         }
 
         [HttpPost("account/{id}/permissions")]

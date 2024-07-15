@@ -33,9 +33,9 @@ namespace OCIRegistry.Controllers
         [DockerAuthorize(RepoScope.Pull)]
         public async Task<IActionResult> GetBlob([FromRoute] string reference, [FromRoute] string name, [FromRoute] string? prefix)
         {
-            string mediaType = Request.Headers.Accept.FirstOrDefault() ?? MediaType.LayerTarGzip; 
+            string mediaType = Request.Headers.Accept.FirstOrDefault() ?? MediaType.LayerTarGzip;
             string repo = RepoHelper.RepoName(prefix, name);
-            var blob = await _db.Blobs.Where(x => x.Id == reference).Where(x => x.Manifests.Any(c => c.Repository.Name == repo)).FirstOrDefaultAsync();
+            var blob = await _db.Blobs.Where(x => x.Id == reference).Where(x => x.Repositories.Any(c => c.Name == repo)).FirstOrDefaultAsync();
             if (blob is null) return NotFound();
 
             var file = await _store.GetAsync(blob.Id);
@@ -47,7 +47,7 @@ namespace OCIRegistry.Controllers
         public async Task<IActionResult> HeadBlob([FromRoute] string reference, [FromRoute] string name, [FromRoute] string? prefix)
         {
             string repo = RepoHelper.RepoName(prefix, name);
-            var blob = await _db.Blobs.Where(x => x.Id == reference).FirstOrDefaultAsync();
+            var blob = await _db.Blobs.Where(x => x.Id == reference).Where(x => x.Repositories.Any(c => c.Name == repo)).FirstOrDefaultAsync();
             if (blob is null) return NotFound();
 
             Response.Headers.Append("Docker-Content-Digest", blob.Id);
@@ -75,21 +75,29 @@ namespace OCIRegistry.Controllers
 
                     string uploadDigest;
 
+                    var repository = await EnsureRepo(repo);
+
                     using (var upload = session.OpenContent())
                     {
                         uploadDigest = _digest.CreateDigest(upload);
                         upload.Position = 0;
 
-                        await _store.PutAsync(uploadDigest, upload);
+                        var blob = await _db.Blobs.Include(x => x.Repositories).FirstOrDefaultAsync(x => x.Id == uploadDigest);
+                        if (blob is null)
+                        {
+                            blob = new Blob { Id = uploadDigest, Size = (ulong)lastIndex+1, Repositories = [repository] };
+                            _db.Blobs.Add(blob);
+                            await _store.PutAsync(uploadDigest, upload);
+
+                            _logger.LogDebug("Created new blob {digest} for repo {repo} via monolithic upload", uploadDigest, repo);
+                        }
+                        else if (!blob.Repositories.Contains(repository))
+                        {
+                            blob.Repositories.Add(repository);
+                            _logger.LogDebug("Added existing blob {digest} to repo {repo} via monolithic upload", uploadDigest, repo);
+                        }
                     }
                     _uploadService.CleanupUpload(uuid);
-
-                    var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
-                    if (blob is null)
-                    {
-                        blob = new Blob { Id = uploadDigest, Size = (ulong)lastIndex+1 };
-                        _db.Blobs.Add(blob);
-                    }
 
                     await _db.SaveChangesAsync();
 
@@ -97,7 +105,7 @@ namespace OCIRegistry.Controllers
                     Response.Headers.Append("Range", $"0-{lastIndex}");
                     return StatusCode(StatusCodes.Status201Created);
                 }
-            }   
+            }
 
             Response.Headers.Location = $"/v2/{repo}/blobs/uploads/{uuid}";
 
@@ -138,7 +146,7 @@ namespace OCIRegistry.Controllers
         [HttpPut("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
         [DisableRequestSizeLimit]
-        public async Task<IActionResult> PutBlob([FromRoute] Guid uuid,[FromQuery] string digest, [FromRoute] string name, [FromRoute] string? prefix)
+        public async Task<IActionResult> PutBlob([FromRoute] Guid uuid, [FromQuery] string digest, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
 
@@ -158,6 +166,8 @@ namespace OCIRegistry.Controllers
 
                 string uploadDigest;
 
+                var repository = await EnsureRepo(repo);
+
                 using (var upload = session.OpenContent())
                 {
                     uploadDigest = _digest.CreateDigest(upload);
@@ -170,17 +180,24 @@ namespace OCIRegistry.Controllers
                         return DockerErrorResponse.DigestInvalid;
                     }
 
-                    await _store.PutAsync(uploadDigest, upload);
+                    var blob = await _db.Blobs.Include(x => x.Repositories).FirstOrDefaultAsync(x => x.Id == uploadDigest);
+                    if (blob is null)
+                    {
+                        blob = new Blob { Id = uploadDigest, Size = (ulong)(lastIndex+1), Repositories = [repository] };
+                        _db.Blobs.Add(blob);
+                        await _store.PutAsync(uploadDigest, upload);
+
+                        _logger.LogDebug("Created new blob {digest} for repo {repo} via chunked upload", uploadDigest, repo);
+                    }
+                    else if(!blob.Repositories.Contains(repository))
+                    {
+                        blob.Repositories.Add(repository);
+
+                        _logger.LogDebug("Added existing blob {digest} to repo {repo} via chunked upload", uploadDigest, repo);
+                    }
                 }
 
                 _uploadService.CleanupUpload(uuid);
-
-                var blob = await _db.Blobs.FirstOrDefaultAsync(x => x.Id == uploadDigest);
-                if (blob is null)
-                {
-                    blob = new Blob { Id = uploadDigest, Size = (ulong)(lastIndex+1) };
-                    _db.Blobs.Add(blob);
-                }
 
                 await _db.SaveChangesAsync();
 
@@ -197,7 +214,7 @@ namespace OCIRegistry.Controllers
 
         [HttpGet("uploads/{uuid:guid}")]
         [DockerAuthorize(RepoScope.Push)]
-        public async Task<IActionResult> GetBlobUpload([FromRoute] Guid uuid, [FromRoute] string name, [FromRoute] string? prefix)
+        public IActionResult GetBlobUpload([FromRoute] Guid uuid, [FromRoute] string name, [FromRoute] string? prefix)
         {
             var repo = RepoHelper.RepoName(prefix, name);
 
@@ -212,6 +229,19 @@ namespace OCIRegistry.Controllers
             {
                 return DockerErrorResponse.BlobUploadUnknown;
             }
+        }
+
+        private async Task<Repository> EnsureRepo(string name)
+        {
+            var repo = await _db.Repositories.Where(x => x.Name == name).FirstOrDefaultAsync();
+            if (repo is null)
+            {
+                repo = new Repository { Name = name };
+                _db.Repositories.Add(repo);
+                await _db.SaveChangesAsync();
+                _logger.LogDebug("Created repository {name}", name);
+            }
+            return repo;
         }
 
         static private long ParseRangeHeader(HttpRequest request)

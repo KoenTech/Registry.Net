@@ -24,8 +24,8 @@ namespace OCIRegistry.Controllers
             string repo = RepoHelper.RepoName(prefix, name);
 
             var tags = await _db.Tags
-                .Include(t => t.Manifest)
-                .ThenInclude(m => m.Repository)
+                //.Include(t => t.Manifest)
+                //.ThenInclude(m => m.Repository)
                 .Where(t => t.Manifest.Repository.Name == repo)
                 .Select(t => t.Name)
                 .ToListAsync();

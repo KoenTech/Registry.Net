@@ -9,6 +9,7 @@ namespace OCIRegistry.Models.Database
         public required string Id { get; set; }
         public required ulong Size { get; set; }
         public List<Manifest> Manifests { get; set; } = new();
+        public List<Repository> Repositories { get; set; } = new();
         //public string? MediaType { get; set; }
     }
 
@@ -38,5 +39,6 @@ namespace OCIRegistry.Models.Database
         public ulong Id { get; set; }
         public required string Name { get; set; }
         public List<Manifest> Manifests { get; set; } = new();
+        public List<Blob> Blobs { get; set; } = new();
     }
 }

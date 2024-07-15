@@ -171,17 +171,20 @@ namespace OCIRegistry.Controllers
                 if (imageManifest is not null)
                 {
                     var digests = imageManifest.layers.Select(x => x.digest).Append(imageManifest.config.digest);
-                    var blobs = await _db.Blobs.Include(b => b.Manifests).Where(b => digests.Contains(b.Id)).ToListAsync();
-                    if (blobs.Count != digests.Count()) return BadRequest();
+                    var blobs = await _db.Blobs.Include(b => b.Manifests).Where(x => x.Repositories.Contains(repository)).Where(b => digests.Contains(b.Id)).ToListAsync();
+                    if (blobs.Count != digests.Count())
+                    {
+                        _logger.LogWarning("Rejected manifest because not all layers are present or the manifest references layers from a different repository");
+                        return BadRequest();
+                    }
 
                     foreach (var blob in blobs.Where(b => !b.Manifests.Contains(manifest)))
                     {
                         blob.Manifests.Add(manifest);
-                        //_db.Blobs.Update(blob);
                     }
                 }
             }
-            catch (JsonException)
+            catch (JsonException e)
             {
                 _logger.LogWarning("Failed to parse manifest as ImageManifest");
                 return BadRequest();

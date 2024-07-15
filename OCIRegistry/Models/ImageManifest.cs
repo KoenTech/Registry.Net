@@ -3,7 +3,7 @@
     public class ImageManifest
     {
         public int schemaVersion { get; set; }
-        public required string mediaType { get; set; }
+        public string? mediaType { get; set; }
         public required Config config { get; set; }
         public required List<Layer> layers { get; set; }
         public Dictionary<string, string> annotations { get; set; } = new();
